@@ -1,0 +1,103 @@
+name: Build iOS IPA
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      bundle_identifier:
+        description: Bundle identifier (AltStore re-signs the app for your account)
+        required: false
+        default: dev.konomitv.wrapper
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 35
+    env:
+      BUNDLE_IDENTIFIER: ${{ inputs.bundle_identifier || 'dev.konomitv.wrapper' }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Check Xcode and project
+        run: |
+          xcodebuild -version
+          python3 scripts/validate-project.py
+          node Tests/MediaBridgeTests.cjs
+
+      - name: Discover an available iPhone simulator
+        id: simulator
+        run: |
+          xcrun simctl list devices available --json > "$RUNNER_TEMP/ios-devices.json"
+          python3 - "$RUNNER_TEMP/ios-devices.json" "$GITHUB_OUTPUT" <<'PY'
+          import json
+          import re
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as source:
+              devices = json.load(source)["devices"]
+          candidates = []
+          for runtime, entries in devices.items():
+              match = re.search(r"\.iOS-(\d+)-(\d+)(?:-(\d+))?$", runtime)
+              if not match:
+                  continue
+              version = tuple(int(part or 0) for part in match.groups())
+              if version < (18, 3, 0):
+                  continue
+              for device in entries:
+                  if device.get("isAvailable") and device["name"].startswith("iPhone"):
+                      candidates.append((version, device["name"], device["udid"]))
+          if not candidates:
+              raise SystemExit("Xcode must have an available iPhone simulator running iOS 18.3 or later.")
+          version, name, udid = sorted(candidates, reverse=True)[0]
+          print(f"Testing on {name} (iOS {'.'.join(map(str, version))}, {udid})")
+          with open(sys.argv[2], "a", encoding="utf-8") as output:
+              output.write(f"udid={udid}\n")
+          PY
+
+      - name: Run Swift unit tests
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          xcodebuild test \
+            -project KonomiTV.xcodeproj \
+            -scheme KonomiTV \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
+            -derivedDataPath build/Simulator \
+            -resultBundlePath build/TestResults.xcresult \
+            -parallel-testing-enabled NO \
+            "BUNDLE_IDENTIFIER=$BUNDLE_IDENTIFIER" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+
+      - name: Build unsigned device IPA
+        run: bash scripts/build-ipa.sh
+
+      - name: Upload IPA for AltStore Classic
+        uses: actions/upload-artifact@v4
+        with:
+          name: KonomiTV-AltStore-unsigned-${{ github.run_number }}
+          path: |
+            dist/KonomiTV.ipa
+            dist/KonomiTV.ipa.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload simulator test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: KonomiTV-test-results-${{ github.run_number }}
+          path: build/TestResults.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
