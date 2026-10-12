@@ -3,6 +3,7 @@ import UIKit
 final class SettingsViewController: UIViewController, UITextFieldDelegate {
     private let currentAddress: ServerAddress?
     private let onSave: (ServerAddress) -> Void
+    private let scrollView = UIScrollView()
     private let addressField = UITextField()
     private let errorLabel = UILabel()
     private let saveButton = UIButton(type: .system)
@@ -43,10 +44,13 @@ final class SettingsViewController: UIViewController, UITextFieldDelegate {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         gradient.frame = view.bounds
+        if addressField.isFirstResponder {
+            let fieldRect = addressField.convert(addressField.bounds, to: scrollView).insetBy(dx: 0, dy: -20)
+            scrollView.scrollRectToVisible(fieldRect, animated: false)
+        }
     }
 
     private func buildContent() {
-        let scrollView = UIScrollView()
         scrollView.keyboardDismissMode = .interactive
         scrollView.alwaysBounceVertical = true
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -61,7 +65,7 @@ final class SettingsViewController: UIViewController, UITextFieldDelegate {
             scrollView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
             content.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor, constant: 28),
             content.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor, constant: -32),
             content.leadingAnchor.constraint(equalTo: scrollView.frameLayoutGuide.leadingAnchor, constant: 24),
