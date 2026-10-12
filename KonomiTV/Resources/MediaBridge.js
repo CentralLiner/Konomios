@@ -57,6 +57,10 @@
     const isRequestPending = video => startChecks.has(video) || pendingStandardRequests.has(video);
     const publishPiP = video => {
         const active = inPiP(video);
+        const resumeAutomaticPlayback = active && pendingAutomaticRequests.has(video)
+            && backgroundCandidate?.video === video && backgroundCandidate.href === location.href
+            && Date.now() - backgroundCandidate.preparedAt <= 5000
+            && video === activeVideo() && video.isConnected && !video.ended && video.readyState > 0;
         if (active) {
             clearStartCheck(video);
             pendingStandardRequests.delete(video);
@@ -64,6 +68,11 @@
         if (active) pipVideo = video;
         else if (pipVideo === video) pipVideo = null;
         post('pip', { active: !!pipVideo && inPiP(pipVideo) });
+        if (resumeAutomaticPlayback && video.paused) {
+            // 背景移行時に OS が停止した、準備時には再生中だった動画だけを実際の PiP 開始後に再開する。
+            // 手動で停止した PiP や要求しただけの動画は再開しない。
+            try { Promise.resolve(video.play()).catch(() => {}); } catch (_) { /* 自動再開の拒否は通知しない */ }
+        }
     };
     const publishPlayback = () => {
         // 新しい video がすでに存在しても、切断された旧 PiP は保持しない。
@@ -95,7 +104,7 @@
             startChecks.delete(video);
             pendingAutomaticRequests.delete(video);
             if (!automatic && video.isConnected && !inPiP(video)) showError();
-        }, 2000));
+        }, automatic ? 5000 : 2000));
         try {
             video.webkitSetPresentationMode('picture-in-picture');
             // 要求しただけでは成功扱いにしない。実際の PiP イベントが native に通知する。

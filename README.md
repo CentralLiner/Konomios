@@ -36,7 +36,7 @@ IPA は AltStore が再署名する前提の署名なし実機ビルドです。
 
 接続失敗や HTTP エラーでは、エラー表示から接続先の設定と再読み込みを行えます。誤った URL が通常の HTML を返した場合にも、KonomiTV の UI が見つからなければ約 5 秒後にページ末尾へ同じ操作を追加します。
 
-Home 時の自動 PiP は `webkitSetPresentationMode('picture-in-picture')` を使い、OS が動画を止める前の再生状態を保存して引き継ぎます。標準 `requestPictureInPicture()` は新しいユーザー操作が必要なため、自動開始の代替には使いません。WKWebView には AVPlayer の `canStartPictureInPictureAutomaticallyFromInline` に相当する公開設定はなく、OS・画質・WebKit の状態によって自動開始できない場合があります。実際の KonomiTV 配信での自動開始・長時間再生は実機で確認してください。自動開始しない場合は、プレイヤーの PiP ボタンから開始できます。
+Home 時の自動 PiP は `webkitSetPresentationMode('picture-in-picture')` を使い、OS が動画を止める前の再生状態を保存して引き継ぎます。移行中に OS が動画を停止した場合は、PiP が実際に始まった後に同じ動画を再開します。元々停止中だった動画や、手動で開始した PiP は自動再開しません。標準 `requestPictureInPicture()` は新しいユーザー操作が必要なため、自動開始の代替には使いません。WKWebView には AVPlayer の `canStartPictureInPictureAutomaticallyFromInline` に相当する公開設定はなく、OS・画質・WebKit の状態によって自動開始できない場合があります。実際の KonomiTV 配信での自動開始・長時間再生は実機で確認してください。自動開始しない場合は、プレイヤーの PiP ボタンから開始できます。
 
 PiP は動画と音声を表示します。Web の別 Canvas / DOM に描画されるコメントや ARIB 字幕は PiP には合成しません。通常の H.264 画質を最初の確認に使ってください。Original MPEG-2、HEVC、オフライン保存など別の再生経路は実機で追加確認が必要です。
 

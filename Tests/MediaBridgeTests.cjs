@@ -94,6 +94,13 @@ function harness(options = {}) {
         webkitPresentationMode: 'inline', attributes: {},
         classList: { contains: name => name === 'dplayer-video-current' },
         setAttribute(name, value) { this.attributes[name] = value; },
+        play() {
+            calls.push(['play']);
+            if (options.rejectPlay) return Promise.reject(new Error('unavailable'));
+            this.paused = false;
+            this.emit('play');
+            return Promise.resolve();
+        },
         webkitSupportsPresentationMode: () => options.webKit !== false,
         webkitSetPresentationMode(mode) {
             if (options.throwWebKit) { calls.push(['webkit', mode]); throw new Error('unavailable'); }
@@ -172,7 +179,7 @@ function harness(options = {}) {
     const context = vm.createContext({
         window, document, location, URL, Date: Clock,
         XMLHttpRequest, MutationObserver, requestAnimationFrame: callback => callback(), Promise,
-        setTimeout: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
+        setTimeout: (callback, delay) => { const id = ++nextTimer; timers.set(id, { callback, due: currentTime + delay }); return id; },
         clearTimeout: id => timers.delete(id)
     });
     const script = template.replace('__KONOMI_ORIGIN__', JSON.stringify('https://tv.example:7000'));
@@ -201,7 +208,12 @@ function harness(options = {}) {
         },
         setHidden(hidden) { document.hidden = hidden; document.emit('visibilitychange'); },
         advanceTime(milliseconds) { currentTime += milliseconds; },
-        runTimers() { for (const callback of Array.from(timers.values())) callback(); timers.clear(); },
+        runTimers() { for (const timer of Array.from(timers.values())) timer.callback(); timers.clear(); },
+        runDueTimers() {
+            for (const [id, timer] of Array.from(timers.entries())) {
+                if (timer.due <= currentTime) { timers.delete(id); timer.callback(); }
+            }
+        },
         mutate() { observer?.(); },
         addSurface(surface) {
             const element = body.appendChild(new Element('div', surfaceClasses[surface]));
@@ -440,11 +452,52 @@ test('starts automatic WebKit PiP from the prepared video after an OS pause', ()
     h.video.paused = true;
     h.video.emit('pause');
     h.setHidden(true);
-    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture']]);
+    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture'], ['play']]);
+    assert.equal(h.video.paused, false);
     assert.equal(h.video.webkitPresentationMode, 'picture-in-picture');
     assert.ok(h.messages.some(message => message.event === 'pip' && message.active));
     assert.equal(h.window.KonomiTVNative.enterPictureInPictureForBackground(), false);
-    assert.equal(h.calls.length, 1);
+    assert.equal(h.calls.length, 2);
+});
+
+test('resumes an OS-paused automatic candidate only after an actual delayed PiP event', () => {
+    const h = harness({ silentWebKit: true });
+    h.window.KonomiTVNative.prepareForBackground();
+    h.video.paused = true;
+    h.video.emit('pause');
+    h.setHidden(true);
+    h.advanceTime(2500);
+    h.runDueTimers();
+    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture']]);
+    assert.equal(h.video.paused, true);
+    assert.ok(!h.messages.some(message => message.event === 'pip' && message.active));
+    h.video.webkitPresentationMode = 'picture-in-picture';
+    h.video.emit('webkitpresentationmodechanged');
+    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture'], ['play']]);
+    assert.equal(h.video.paused, false);
+    h.video.paused = true;
+    h.video.emit('pause');
+    h.window.KonomiTVNative.refresh();
+    assert.equal(h.calls.filter(call => call[0] === 'play').length, 1);
+});
+
+test('does not resume an unprepared manually paused video on manual PiP entry', () => {
+    const h = harness({ paused: true });
+    h.click();
+    assert.equal(h.video.webkitPresentationMode, 'picture-in-picture');
+    assert.equal(h.video.paused, true);
+    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture']]);
+});
+
+test('a rejected automatic playback resume remains quiet', async () => {
+    const h = harness({ rejectPlay: true });
+    h.window.KonomiTVNative.prepareForBackground();
+    h.video.paused = true;
+    h.setHidden(true);
+    await Promise.resolve();
+    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture'], ['play']]);
+    assert.equal(h.video.paused, true);
+    assert.ok(!h.messages.some(message => message.event === 'error'));
 });
 
 test('starts automatic PiP directly on hidden only when the current video is playing', () => {
