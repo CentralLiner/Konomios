@@ -83,6 +83,14 @@ jobs:
       - name: Build unsigned device IPA
         run: bash scripts/build-ipa.sh
 
+      - name: Capture the initial settings screen
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          xcrun simctl launch --terminate-running-process "$SIMULATOR_UDID" "$BUNDLE_IDENTIFIER"
+          sleep 3
+          xcrun simctl io "$SIMULATOR_UDID" screenshot dist/Konomios-setup.png
+
       - name: Upload IPA for AltStore Classic
         uses: actions/upload-artifact@v4
         with:
@@ -90,6 +98,7 @@ jobs:
           path: |
             dist/KonomiTV.ipa
             dist/KonomiTV.ipa.sha256
+            dist/Konomios-setup.png
           if-no-files-found: error
           retention-days: 30
 

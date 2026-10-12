@@ -9,6 +9,7 @@
         try { native.postMessage({ event, ...details }); } catch (_) { /* ページの破棄中は送信しない */ }
     };
     const boundVideos = new WeakSet();
+    const startChecks = new WeakMap();
     let pipVideo = null;
     let sessionURL = null;
     let playbackPath = location.pathname;
@@ -29,7 +30,7 @@
             || candidates.find(video => video.readyState > 0)
             || candidates[0] || null;
     };
-    const inPiP = video => !!video && (document.pictureInPictureElement === video
+    const inPiP = video => !!video && video.isConnected && (document.pictureInPictureElement === video
         || video.webkitPresentationMode === 'picture-in-picture');
     const canUseWebKitPiP = video => {
         try { return typeof video?.webkitSupportsPresentationMode === 'function'
@@ -39,20 +40,25 @@
         && typeof video?.requestPictureInPicture === 'function' && !video.disablePictureInPicture;
     const publishPiP = video => {
         const active = inPiP(video);
+        if (active && startChecks.has(video)) {
+            clearTimeout(startChecks.get(video));
+            startChecks.delete(video);
+        }
         if (active) pipVideo = video;
         else if (pipVideo === video) pipVideo = null;
         post('pip', { active: !!pipVideo && inPiP(pipVideo) });
     };
     const publishPlayback = () => {
+        // 新しい video がすでに存在しても、切断された旧 PiP は保持しない。
+        if (pipVideo && !pipVideo.isConnected) {
+            pipVideo = null;
+            post('pip', { active: false });
+        }
         const video = activeVideo();
         post('playback', { playing: !!video && !video.paused && !video.ended });
         if (!video) {
             sessionURL = null;
             post('session', { url: null });
-            if (pipVideo && !pipVideo.isConnected) {
-                pipVideo = null;
-                post('pip', { active: false });
-            }
         }
     };
     const showError = () => {
@@ -86,6 +92,13 @@
         });
         updateButtons();
         publishPlayback();
+        // 新規 document でも初期状態を通知し、前ページの native PiP 状態を解除する。
+        const actualPiPVideo = Array.from(document.querySelectorAll('.dplayer video')).find(inPiP);
+        if (actualPiPVideo) publishPiP(actualPiPVideo);
+        else {
+            pipVideo = null;
+            post('pip', { active: false });
+        }
     };
     const scheduleScan = () => {
         if (scheduled) return;
@@ -114,6 +127,10 @@
         event.stopImmediatePropagation();
         try {
             if (inPiP(video)) {
+                if (startChecks.has(video)) {
+                    clearTimeout(startChecks.get(video));
+                    startChecks.delete(video);
+                }
                 if (video.webkitPresentationMode === 'picture-in-picture'
                     && typeof video.webkitSetPresentationMode === 'function') {
                     video.webkitSetPresentationMode('inline');
@@ -122,6 +139,14 @@
                 }
             } else if (canUseWebKitPiP(video)) {
                 video.webkitSetPresentationMode('picture-in-picture');
+                // WebKit API は Promise を返さないため、無反応の失敗も検出する。
+                if (!inPiP(video)) {
+                    if (startChecks.has(video)) clearTimeout(startChecks.get(video));
+                    startChecks.set(video, setTimeout(() => {
+                        startChecks.delete(video);
+                        if (video.isConnected && !inPiP(video)) showError();
+                    }, 2000));
+                }
             } else if (canUseStandardPiP(video)) {
                 Promise.resolve(video.requestPictureInPicture()).catch(showError);
             } else {

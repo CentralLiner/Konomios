@@ -307,6 +307,12 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         refreshMediaState()
     }
 
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        // document の交換で旧ページの終了イベントが失われても、操作抑止を残さない。
+        keepAlive.stop()
+        pipActive = false
+    }
+
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         showNavigationError(error)
     }

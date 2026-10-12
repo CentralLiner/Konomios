@@ -28,6 +28,7 @@ function harness(options = {}) {
         setAttribute(name, value) { this.attributes[name] = value; },
         webkitSupportsPresentationMode: () => options.webKit !== false,
         webkitSetPresentationMode(mode) {
+            if (options.silentWebKit) { calls.push(['webkit', mode]); return; }
             this.webkitPresentationMode = mode;
             calls.push(['webkit', mode]);
             this.emit('webkitpresentationmodechanged');
@@ -72,9 +73,13 @@ function harness(options = {}) {
     window.top = options.iframe ? {} : window;
     const origin = options.origin || 'https://tv.example:7000';
     const location = { origin, href: origin + '/tv/watch/gr011', pathname: '/tv/watch/gr011' };
+    const timers = new Map();
+    let nextTimer = 0;
     const context = vm.createContext({
         window, document, location, URL,
-        XMLHttpRequest, MutationObserver, requestAnimationFrame: callback => callback(), Promise
+        XMLHttpRequest, MutationObserver, requestAnimationFrame: callback => callback(), Promise,
+        setTimeout: callback => { const id = ++nextTimer; timers.set(id, callback); return id; },
+        clearTimeout: id => timers.delete(id)
     });
     const script = template.replace('__KONOMI_ORIGIN__', JSON.stringify('https://tv.example:7000'));
     vm.runInContext(script, context, { filename: 'MediaBridge.js' });
@@ -90,6 +95,7 @@ function harness(options = {}) {
         return { prevented, stopped };
     };
     return { window, document, video, button, messages, calls, click, location,
+        runTimers() { for (const callback of Array.from(timers.values())) callback(); timers.clear(); },
         mutate() { observer?.(); },
         replaceVideos(next) { videos = next; observer?.(); }
     };
@@ -195,4 +201,29 @@ test('discards a recording session when an SPA route changes with a video still 
     h.mutate();
     assert.ok(h.messages.some(message => message.event === 'session' && message.url === null));
     assert.equal(h.messages.filter(message => message.event === 'session').at(-1).url, null);
+});
+
+test('clears old PiP when its video is replaced without a leave event', () => {
+    const h = harness();
+    h.click();
+    h.video.isConnected = false;
+    const next = new Target();
+    Object.assign(next, { paused: false, readyState: 4, isConnected: true, setAttribute() {} });
+    h.replaceVideos([next]);
+    h.window.KonomiTVNative.refresh();
+    assert.equal(h.messages.filter(message => message.event === 'pip').at(-1).active, false);
+});
+
+test('a new document explicitly resets native PiP state', () => {
+    const h = harness();
+    assert.ok(h.messages.some(message => message.event === 'pip' && message.active === false));
+});
+
+test('reports a silent WebKit PiP failure after checking actual presentation state', () => {
+    const h = harness({ silentWebKit: true });
+    h.click();
+    assert.ok(!h.messages.some(message => message.event === 'error'));
+    h.runTimers();
+    assert.ok(h.messages.some(message => message.event === 'error'));
+    assert.ok(!h.messages.some(message => message.event === 'pip' && message.active));
 });
