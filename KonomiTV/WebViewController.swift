@@ -15,6 +15,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
     private var pipActive = false
     private var audioActivated = false
     private var navigationResponseSucceeded = false
+    private var navigationResponseStatus: Int?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     private var backgroundTaskTimeout: DispatchWorkItem?
     private var pendingNativeAction: NativeAction?
@@ -190,6 +191,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         address = server
         settings.serverAddress = server
         navigationResponseSucceeded = false
+        navigationResponseStatus = nil
         do {
             try bridge.configure(webView.configuration.userContentController, address: server)
             hideError()
@@ -437,13 +439,14 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         navigationResponseSucceeded = false
+        navigationResponseStatus = nil
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
                  decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         if navigationResponse.isForMainFrame {
-            navigationResponseSucceeded = (navigationResponse.response as? HTTPURLResponse)
-                .map { (200..<400).contains($0.statusCode) } ?? false
+            navigationResponseStatus = (navigationResponse.response as? HTTPURLResponse)?.statusCode
+            navigationResponseSucceeded = navigationResponseStatus.map { (200..<400).contains($0) } ?? false
         }
         decisionHandler(.allow)
     }
@@ -452,7 +455,12 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         if navigationResponseSucceeded, let address = address, let url = webView.url, address.containsNavigation(url) {
             settings.recordConnection(address)
         }
-        hideError()
+        if navigationResponseSucceeded {
+            hideError()
+        } else {
+            let status = navigationResponseStatus.map { "（HTTP \($0)）" } ?? ""
+            displayError("サーバーの画面を読み込めませんでした\(status)。接続先の URL とサーバーの状態を確認してください。")
+        }
         refreshMediaState()
     }
 

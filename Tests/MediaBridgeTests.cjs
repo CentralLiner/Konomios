@@ -120,7 +120,7 @@ function harness(options = {}) {
     const surfaces = {};
     const surfaceClasses = {
         navigation: 'settings-navigation', detail: 'settings', login: 'login-container',
-        player: 'dplayer-setting-origin-panel'
+        player: 'dplayer-setting-origin-panel', home: 'header', watch: 'watch-container'
     };
     for (const surface of options.surfaces || []) {
         surfaces[surface] = body.appendChild(new Element('div', surfaceClasses[surface]));
@@ -386,6 +386,43 @@ test('re-injects actions after a Vue page is replaced without leaving duplicates
     const settings = next.querySelector('[data-konomi-native-action="settings"]');
     h.clickElement(settings);
     assert.equal(h.messages.at(-1).event, 'settings');
+});
+
+test('adds one page-footer recovery row after an unrecognized HTTP 200 page remains mounted', () => {
+    const h = harness();
+    assert.equal(h.document.querySelector('[data-konomi-native-actions="fallback"]'), null);
+    h.advanceTime(5000);
+    h.runTimers();
+    h.mutate();
+    h.window.KonomiTVNative.refresh();
+    const rows = h.document.querySelectorAll('[data-konomi-native-actions="fallback"]');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].parentNode, h.document.body);
+    assert.equal(rows[0].querySelectorAll('[data-konomi-native-action]').length, 2);
+    for (const action of ['settings', 'reload']) {
+        h.clickElement(rows[0].querySelector(`[data-konomi-native-action="${action}"]`));
+        assert.equal(h.messages.at(-1).event, action);
+    }
+});
+
+test('keeps recognized home, watch, settings and login pages free from fallback controls', () => {
+    for (const surface of ['home', 'watch', 'navigation', 'detail', 'login']) {
+        const h = harness({ surfaces: [surface] });
+        h.advanceTime(5000);
+        h.runTimers();
+        h.mutate();
+        assert.equal(h.document.querySelector('[data-konomi-native-actions="fallback"]'), null);
+    }
+});
+
+test('removes the recovery footer when a late Vue mount creates the recognized home UI', () => {
+    const h = harness();
+    h.advanceTime(5000);
+    h.runTimers();
+    assert.ok(h.document.querySelector('[data-konomi-native-actions="fallback"]'));
+    h.addSurface('home');
+    h.mutate();
+    assert.equal(h.document.querySelector('[data-konomi-native-actions="fallback"]'), null);
 });
 
 test('prepares a playing video without starting PiP for Control Center or an incoming call', () => {

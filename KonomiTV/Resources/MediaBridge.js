@@ -20,6 +20,7 @@
     let backgroundPrepared = false;
     let backgroundCandidate = null;
     let backgroundAttempted = false;
+    let fallbackEnabled = false;
 
     const synchronizeRoute = () => {
         if (playbackPath === location.pathname) return;
@@ -161,6 +162,7 @@
             .konomi-native-action:focus-visible { outline:2px solid var(--v-primary-base,#ac7afa); outline-offset:2px; }
             .konomi-native-actions--navigation .konomi-native-action { flex:1; }
             .konomi-native-actions--login { justify-content:center; }
+            .konomi-native-actions--fallback { justify-content:center; margin:24px 16px; }
             .konomi-native-player-action { display:flex; align-items:center; width:100%; border:0;
                 border-radius:0; min-height:40px; padding:8px 20px; background:transparent; text-align:left; }
             .konomi-native-player-action:hover { background:rgba(255,255,255,.08); }
@@ -215,6 +217,11 @@
                 panel.appendChild(button);
             }
         });
+        const fallback = document.querySelector('[data-konomi-native-actions="fallback"]');
+        const recognizedUI = ['.header', '.watch-container', '.settings-navigation', '.settings', '.login-container']
+            .some(selector => document.querySelector(selector));
+        if (recognizedUI) fallback?.parentNode?.removeChild(fallback);
+        else if (fallbackEnabled && document.body) ensureActionRow(document.body, 'fallback');
     };
 
     const updateButtons = () => {
@@ -379,5 +386,10 @@
         });
         scan();
         post('ready');
+        // 誤った URL が HTTP 200 の一般ページを返しても、接続先を変更できるようにする。
+        setTimeout(() => {
+            fallbackEnabled = true;
+            injectActions();
+        }, 5000);
     }, { once: true });
 })();
