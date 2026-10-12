@@ -4,7 +4,7 @@ import AVFAudio
 
 /// 設定の変更時以外は同じ WKWebView とプレイヤーを保持する。
 final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WebBridgeDelegate {
-    private let settings = AppSettings.shared
+    private let settings: AppSettings
     private let bridge = WebBridge()
     private let keepAlive = PlaybackKeepAlive()
     private var address: ServerAddress?
@@ -14,11 +14,14 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
     private var fullscreen = false
     private var pipActive = false
     private var audioActivated = false
-    private let header = UIStackView()
-    private let titleLabel = UILabel()
-    private let statusLabel = UILabel()
+    private var navigationResponseSucceeded = false
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundTaskTimeout: DispatchWorkItem?
+    private var pendingNativeAction: NativeAction?
+    private enum NativeAction { case settings, reload }
     private let progress = UIProgressView(progressViewStyle: .bar)
     private let errorLabel = UILabel()
+    private let errorPanel = UIStackView()
     private let webContainer = UIView()
     private let emptyLabel = UILabel()
     private let accent = UIColor(red: 0.64, green: 0.45, blue: 0.96, alpha: 1)
@@ -27,7 +30,27 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
     override var preferredStatusBarStyle: UIStatusBarStyle { .lightContent }
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
         if UIDevice.current.userInterfaceIdiom == .pad { return .all }
-        return fullscreen ? .landscape : .allButUpsideDown
+        return .allButUpsideDown
+    }
+
+    init(settings: AppSettings = .shared) {
+        self.settings = settings
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        restoreInlineLayoutIfNeeded()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // WebKit owns the frame while the same WebView is in its fullscreen window.
+        if webView?.superview === webContainer, webView.fullscreenState == .notInFullscreen {
+            webView.frame = webContainer.bounds
+        }
     }
 
     override func viewDidLoad() {
@@ -41,7 +64,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         if let saved = settings.serverAddress {
             openServer(saved)
         } else {
-            emptyLabel.text = "KonomiTV を、いつものサーバーで。\n右上の設定から接続先を登録してください。"
+            emptyLabel.text = "KonomiTV を、いつものサーバーで。\nタップして接続先を登録してください。"
         }
     }
 
@@ -51,62 +74,22 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
     }
 
     private func buildLayout() {
-        header.axis = .horizontal
-        header.alignment = .center
-        header.spacing = 12
-        header.isLayoutMarginsRelativeArrangement = true
-        header.layoutMargins = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 12)
-        let icon = UIImageView(image: UIImage(systemName: "tv"))
-        icon.tintColor = accent
-        icon.widthAnchor.constraint(equalToConstant: 28).isActive = true
-        let labels = UIStackView(arrangedSubviews: [titleLabel, statusLabel])
-        labels.axis = .vertical
-        labels.spacing = 2
-        titleLabel.text = "Konomios"
-        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
-        statusLabel.font = .systemFont(ofSize: 11)
-        statusLabel.textColor = .secondaryLabel
-        statusLabel.lineBreakMode = .byTruncatingMiddle
-        statusLabel.text = "KonomiTV の接続先を設定"
-        let reload = UIButton(type: .system)
-        reload.setImage(UIImage(systemName: "arrow.clockwise"), for: .normal)
-        reload.accessibilityLabel = "再読み込み"
-        reload.addTarget(self, action: #selector(reloadPage), for: .touchUpInside)
-        let gear = UIButton(type: .system)
-        gear.setImage(UIImage(systemName: "gearshape"), for: .normal)
-        gear.accessibilityLabel = "接続先の設定"
-        gear.addTarget(self, action: #selector(showSettings), for: .touchUpInside)
-        [reload, gear].forEach { button in
-            button.tintColor = .label
-            button.widthAnchor.constraint(equalToConstant: 40).isActive = true
-            button.heightAnchor.constraint(equalToConstant: 40).isActive = true
-        }
-        [icon, labels, reload, gear].forEach(header.addArrangedSubview)
-        progress.progressTintColor = accent
-        progress.trackTintColor = .clear
-        errorLabel.font = .systemFont(ofSize: 13)
-        errorLabel.textColor = UIColor.systemOrange
-        errorLabel.numberOfLines = 0
-        errorLabel.isHidden = true
-        errorLabel.accessibilityTraits = .staticText
-        let errorRow = UIStackView(arrangedSubviews: [errorLabel])
-        errorRow.isLayoutMarginsRelativeArrangement = true
-        errorRow.layoutMargins = UIEdgeInsets(top: 0, left: 16, bottom: 8, right: 16)
-        let stack = UIStackView(arrangedSubviews: [header, progress, errorRow, webContainer])
-        stack.axis = .vertical
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        // Give the browser a definite height even while WebKit swaps it for a fullscreen placeholder.
+        // A vertical UIStackView would distribute the vacated space to the old native header.
+        webContainer.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(webContainer)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            progress.heightAnchor.constraint(equalToConstant: 2)
+            webContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            webContainer.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+            webContainer.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor),
+            webContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
         emptyLabel.numberOfLines = 0
         emptyLabel.textAlignment = .center
         emptyLabel.font = .systemFont(ofSize: 17, weight: .medium)
         emptyLabel.textColor = .secondaryLabel
+        emptyLabel.isUserInteractionEnabled = true
+        emptyLabel.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(showSettings)))
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         webContainer.addSubview(emptyLabel)
         NSLayoutConstraint.activate([
@@ -114,6 +97,51 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
             emptyLabel.centerYAnchor.constraint(equalTo: webContainer.centerYAnchor),
             emptyLabel.leadingAnchor.constraint(greaterThanOrEqualTo: webContainer.leadingAnchor, constant: 24),
             emptyLabel.trailingAnchor.constraint(lessThanOrEqualTo: webContainer.trailingAnchor, constant: -24)
+        ])
+        progress.progressTintColor = accent
+        progress.trackTintColor = .clear
+        progress.isHidden = true
+        progress.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(progress)
+        NSLayoutConstraint.activate([
+            progress.topAnchor.constraint(equalTo: webContainer.topAnchor),
+            progress.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
+            progress.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
+            progress.heightAnchor.constraint(equalToConstant: 2)
+        ])
+
+        // Only failed connections need native recovery controls: there is no usable web UI then.
+        errorLabel.font = .systemFont(ofSize: 13)
+        errorLabel.textColor = .systemOrange
+        errorLabel.numberOfLines = 0
+        errorLabel.accessibilityTraits = .staticText
+        let actions = UIStackView()
+        actions.axis = .horizontal
+        actions.spacing = 12
+        for (title, selector) in [("接続先の設定", #selector(showSettings)),
+                                  ("再読み込み", #selector(reloadPage)),
+                                  ("閉じる", #selector(hideError))] {
+            let button = UIButton(type: .system)
+            button.setTitle(title, for: .normal)
+            button.addTarget(self, action: selector, for: .touchUpInside)
+            button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+            actions.addArrangedSubview(button)
+        }
+        errorPanel.axis = .vertical
+        errorPanel.spacing = 8
+        errorPanel.isLayoutMarginsRelativeArrangement = true
+        errorPanel.layoutMargins = UIEdgeInsets(top: 12, left: 16, bottom: 4, right: 16)
+        errorPanel.backgroundColor = UIColor(red: 0.12, green: 0.10, blue: 0.16, alpha: 0.98)
+        errorPanel.layer.cornerRadius = 12
+        errorPanel.addArrangedSubview(errorLabel)
+        errorPanel.addArrangedSubview(actions)
+        errorPanel.isHidden = true
+        errorPanel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(errorPanel)
+        NSLayoutConstraint.activate([
+            errorPanel.topAnchor.constraint(equalTo: webContainer.topAnchor, constant: 12),
+            errorPanel.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor, constant: 12),
+            errorPanel.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor, constant: -12)
         ])
     }
 
@@ -123,9 +151,9 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         configuration.allowsInlineMediaPlayback = true
         configuration.allowsPictureInPictureMediaPlayback = true
         configuration.preferences.isElementFullscreenEnabled = true
-        // 視聴画面の自動再生を許可。PiP は引き続きユーザーのタップから要求する。
+        // Allow autoplay; background PiP uses WebKit's video presentation-mode API.
         configuration.mediaTypesRequiringUserActionForPlayback = []
-        configuration.applicationNameForUserAgent = "Konomios/0.1.0"
+        configuration.applicationNameForUserAgent = "Konomios/0.2.0"
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -136,14 +164,12 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         #if DEBUG
         webView.isInspectable = true
         #endif
-        webView.translatesAutoresizingMaskIntoConstraints = false
+        // WebKit transfers WKWebView out of this hierarchy for Element Fullscreen.
+        // Its placeholder copies frame/autoresizingMask, not our external Auto Layout constraints.
+        webView.translatesAutoresizingMaskIntoConstraints = true
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        webView.frame = webContainer.bounds
         webContainer.insertSubview(webView, belowSubview: emptyLabel)
-        NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: webContainer.topAnchor),
-            webView.leadingAnchor.constraint(equalTo: webContainer.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: webContainer.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: webContainer.bottomAnchor)
-        ])
         fullscreenObservation = webView.observe(\.fullscreenState, options: [.new]) { [weak self] _, _ in
             DispatchQueue.main.async { self?.updateFullscreenState() }
         }
@@ -159,13 +185,15 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         // 接続先変更は明示的な操作。PiP を閉じてから読み込み先を切り替える。
         keepAlive.stop()
         pipActive = false
+        finishBackgroundTask()
+        pendingNativeAction = nil
         address = server
         settings.serverAddress = server
+        navigationResponseSucceeded = false
         do {
             try bridge.configure(webView.configuration.userContentController, address: server)
-            errorLabel.isHidden = true
+            hideError()
             emptyLabel.isHidden = true
-            statusLabel.text = "接続しています…"
             webView.load(URLRequest(url: server.url))
         } catch {
             displayError(error.localizedDescription)
@@ -178,7 +206,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
             return
         }
         guard presentedViewController == nil else { return }
-        let screen = SettingsViewController(currentAddress: address) { [weak self] server in
+        let screen = SettingsViewController(currentAddress: address, settings: settings) { [weak self] server in
             // dismiss の viewDidAppear より前に設定を反映し、初回設定の再表示を防ぐ。
             self?.openServer(server)
             self?.dismiss(animated: true)
@@ -205,11 +233,115 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
     }
 
     private func updateFullscreenState() {
-        fullscreen = webView.fullscreenState == .inFullscreen || webView.fullscreenState == .enteringFullscreen
+        let state = webView.fullscreenState
+        fullscreen = state != .notInFullscreen
         setNeedsStatusBarAppearanceUpdate()
-        setNeedsUpdateOfSupportedInterfaceOrientations()
-        if let scene = view.window?.windowScene, UIDevice.current.userInterfaceIdiom == .phone {
-            scene.requestGeometryUpdate(.iOS(interfaceOrientations: fullscreen ? .landscape : .allButUpsideDown))
+        // Let the device and WebKit choose orientation; forcing a geometry update during the
+        // fullscreen transfer races the presentation and can leave a blank player.
+        if state == .notInFullscreen {
+            restoreInlineLayoutIfNeeded()
+            DispatchQueue.main.async { [weak self] in
+                self?.restoreInlineLayoutIfNeeded()
+                self?.performPendingNativeAction()
+            }
+        }
+    }
+
+    private func restoreInlineLayoutIfNeeded() {
+        guard isViewLoaded, let webView = webView, webView.fullscreenState == .notInFullscreen else { return }
+        if webView.superview !== webContainer {
+            webView.removeFromSuperview()
+            webContainer.insertSubview(webView, belowSubview: emptyLabel)
+        }
+        webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        webView.frame = webContainer.bounds
+        webContainer.setNeedsLayout()
+    }
+
+    private func requestNativeAction(_ action: NativeAction) {
+        guard !pipActive else {
+            displayError("この操作を行うには、PiP を閉じてください。")
+            return
+        }
+        pendingNativeAction = action
+        if webView.fullscreenState != .notInFullscreen {
+            // Keep KonomiTV's fullscreenchange handler / player state in sync.
+            webView.callAsyncJavaScript("""
+                const exit = document.exitFullscreen || document.webkitExitFullscreen;
+                if (!exit) return false;
+                await exit.call(document);
+                return true;
+                """, arguments: [:], in: nil, in: .page) { [weak self] result in
+                switch result {
+                case .success(let value) where (value as? Bool) == true:
+                    self?.performPendingNativeAction()
+                default:
+                    self?.pendingNativeAction = nil
+                    self?.displayError("全画面を解除してから、もう一度お試しください。")
+                }
+            }
+        } else {
+            performPendingNativeAction()
+        }
+    }
+
+    private func performPendingNativeAction(attempt: Int = 0) {
+        guard pendingNativeAction != nil, webView.fullscreenState == .notInFullscreen else { return }
+        // Fullscreen's UIKit presentation may finish after the observable state changes.
+        if presentedViewController != nil {
+            if attempt < 10 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    self?.performPendingNativeAction(attempt: attempt + 1)
+                }
+            } else { pendingNativeAction = nil }
+            return
+        }
+        let action = pendingNativeAction
+        pendingNativeAction = nil
+        switch action {
+        case .settings: showSettings()
+        case .reload: reloadPage()
+        case .none: break
+        }
+    }
+
+    func prepareForBackground() {
+        guard isViewLoaded, address != nil else { return }
+        webView.evaluateJavaScript("window.KonomiTVNative?.prepareForBackground()", completionHandler: nil)
+    }
+
+    func enterBackground() {
+        guard isViewLoaded, address != nil, !pipActive else { return }
+        beginBackgroundTask()
+        webView.evaluateJavaScript("window.KonomiTVNative?.enterPictureInPictureForBackground()") { [weak self] result, _ in
+            if (result as? Bool) != true { self?.finishBackgroundTask() }
+        }
+    }
+
+    func becomeActive() {
+        finishBackgroundTask()
+        guard isViewLoaded else { return }
+        webView.evaluateJavaScript("window.KonomiTVNative?.didBecomeActive()", completionHandler: nil)
+        refreshMediaState()
+        restoreInlineLayoutIfNeeded()
+    }
+
+    private func beginBackgroundTask() {
+        guard backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "Start video PiP") { [weak self] in
+            self?.finishBackgroundTask()
+        }
+        let timeout = DispatchWorkItem { [weak self] in self?.finishBackgroundTask() }
+        backgroundTaskTimeout = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: timeout)
+    }
+
+    private func finishBackgroundTask() {
+        backgroundTaskTimeout?.cancel()
+        backgroundTaskTimeout = nil
+        if backgroundTask != .invalid {
+            UIApplication.shared.endBackgroundTask(backgroundTask)
+            backgroundTask = .invalid
         }
     }
 
@@ -244,19 +376,20 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
 
     private func displayError(_ message: String) {
         errorLabel.text = message
-        errorLabel.isHidden = false
+        errorPanel.isHidden = false
         UIAccessibility.post(notification: .announcement, argument: message)
     }
 
-    func bridgeDidBecomeReady() {
-        statusLabel.text = address?.url.host ?? "接続済み"
-    }
+    @objc private func hideError() { errorPanel.isHidden = true }
+
+    func bridgeDidBecomeReady() {}
+    func bridgeRequestedSettings() { requestNativeAction(.settings) }
+    func bridgeRequestedReload() { requestNativeAction(.reload) }
 
     func bridgePictureInPictureChanged(isActive: Bool) {
         pipActive = isActive
         keepAlive.setPictureInPictureActive(isActive)
-        if isActive { activateAudio() }
-        statusLabel.text = isActive ? "PiP で再生中" : address?.url.host
+        if isActive { activateAudio(); finishBackgroundTask() }
     }
 
     func bridgePlaybackChanged(isPlaying: Bool) {
@@ -302,8 +435,24 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         return nil
     }
 
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        navigationResponseSucceeded = false
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        if navigationResponse.isForMainFrame {
+            navigationResponseSucceeded = (navigationResponse.response as? HTTPURLResponse)
+                .map { (200..<400).contains($0.statusCode) } ?? false
+        }
+        decisionHandler(.allow)
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        statusLabel.text = address?.url.host
+        if navigationResponseSucceeded, let address = address, let url = webView.url, address.containsNavigation(url) {
+            settings.recordConnection(address)
+        }
+        hideError()
         refreshMediaState()
     }
 
@@ -311,6 +460,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
         // document の交換で旧ページの終了イベントが失われても、操作抑止を残さない。
         keepAlive.stop()
         pipActive = false
+        finishBackgroundTask()
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -323,7 +473,6 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
 
     private func showNavigationError(_ error: Error) {
         guard (error as NSError).code != NSURLErrorCancelled else { return }
-        statusLabel.text = "接続できませんでした"
         displayError("サーバーの起動状態、URL、ネットワークを確認してください。\n\(error.localizedDescription)")
         progress.isHidden = true
     }
@@ -331,6 +480,7 @@ final class WebViewController: UIViewController, WKNavigationDelegate, WKUIDeleg
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         keepAlive.stop()
         pipActive = false
+        finishBackgroundTask()
         displayError("視聴画面が終了しました。再読み込みして再開してください。")
     }
 }

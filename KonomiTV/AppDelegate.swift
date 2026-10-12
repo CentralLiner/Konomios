@@ -24,8 +24,16 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         browser?.supportedInterfaceOrientations ?? .allButUpsideDown
     }
 
+    func applicationWillResignActive(_ application: UIApplication) {
+        browser?.prepareForBackground()
+    }
+
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        browser?.enterBackground()
+    }
+
     func applicationDidBecomeActive(_ application: UIApplication) {
         // PiP から戻っても load/reload を呼ばず、同じ Web プレイヤーを維持する。
-        browser?.refreshMediaState()
+        browser?.becomeActive()
     }
 }

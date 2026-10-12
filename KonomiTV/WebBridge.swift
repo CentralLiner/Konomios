@@ -7,9 +7,11 @@ protocol WebBridgeDelegate: AnyObject {
     func bridgePlaybackChanged(isPlaying: Bool)
     func bridgeRecordingSessionChanged(url: URL?)
     func bridgeReportedError(_ message: String)
+    func bridgeRequestedSettings()
+    func bridgeRequestedReload()
 }
 
-/// Web の PiP と録画セッションだけを連携する。任意のコード実行コマンドは受け付けない。
+/// 登録先の Web UI・PiP・録画セッションを連携する。受け付ける操作は固定する。
 final class WebBridge: NSObject, WKScriptMessageHandler {
     static let handlerName = "konomiNative"
     weak var delegate: WebBridgeDelegate?
@@ -46,6 +48,10 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
         switch event {
         case "ready":
             delegate?.bridgeDidBecomeReady()
+        case "settings":
+            delegate?.bridgeRequestedSettings()
+        case "reload":
+            delegate?.bridgeRequestedReload()
         case "pip":
             if let active = payload["active"] as? Bool {
                 delegate?.bridgePictureInPictureChanged(isActive: active)

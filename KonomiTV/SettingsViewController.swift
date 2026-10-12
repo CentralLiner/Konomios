@@ -2,16 +2,19 @@ import UIKit
 
 final class SettingsViewController: UIViewController, UITextFieldDelegate {
     private let currentAddress: ServerAddress?
+    private let settings: AppSettings
     private let onSave: (ServerAddress) -> Void
     private let scrollView = UIScrollView()
     private let addressField = UITextField()
     private let errorLabel = UILabel()
     private let saveButton = UIButton(type: .system)
+    private let historyRows = UIStackView()
     private let gradient = CAGradientLayer()
     private let accent = UIColor(red: 0.67, green: 0.48, blue: 0.99, alpha: 1)
 
-    init(currentAddress: ServerAddress?, onSave: @escaping (ServerAddress) -> Void) {
+    init(currentAddress: ServerAddress?, settings: AppSettings = .shared, onSave: @escaping (ServerAddress) -> Void) {
         self.currentAddress = currentAddress
+        self.settings = settings
         self.onSave = onSave
         super.init(nibName: nil, bundle: nil)
     }
@@ -176,6 +179,21 @@ final class SettingsViewController: UIViewController, UITextFieldDelegate {
         content.addArrangedSubview(saveButton)
         updateSaveState()
 
+        let historySection = UIStackView()
+        historySection.axis = .vertical
+        historySection.spacing = 12
+        historySection.addArrangedSubview(label("接続履歴", style: .headline, weight: .semibold))
+        historySection.addArrangedSubview(label(
+            "タップして接続できます。ピン留めした接続先は上に表示されます。",
+            style: .footnote, color: .secondaryLabel
+        ))
+        historyRows.axis = .vertical
+        historyRows.spacing = 12
+        historyRows.accessibilityIdentifier = "connectionHistory"
+        historySection.addArrangedSubview(historyRows)
+        content.addArrangedSubview(historySection)
+        refreshHistory()
+
         let connectionNote = label(
             "このiPhoneから接続できる、有効な証明書のHTTPS URLを使用してください。自宅内のサーバーには同じWi-Fi、外出先からはVPNなどで接続します。",
             style: .footnote, color: .secondaryLabel
@@ -236,6 +254,113 @@ final class SettingsViewController: UIViewController, UITextFieldDelegate {
         return card
     }
 
+    private func refreshHistory() {
+        for row in historyRows.arrangedSubviews {
+            historyRows.removeArrangedSubview(row)
+            row.removeFromSuperview()
+        }
+        let entries = settings.connectionHistory
+        guard !entries.isEmpty else {
+            historyRows.addArrangedSubview(label(
+                "接続に成功したサーバーがここに表示されます。",
+                style: .footnote, color: .tertiaryLabel
+            ))
+            return
+        }
+        for entry in entries { historyRows.addArrangedSubview(historyCard(entry)) }
+    }
+
+    private func historyCard(_ entry: AppSettings.ConnectionHistoryEntry) -> UIView {
+        let connect = UIButton(type: .system)
+        connect.accessibilityIdentifier = "reconnectServer"
+        connect.accessibilityLabel = "\(entry.address.url.absoluteString)に接続"
+        connect.addAction(UIAction { [weak self] _ in self?.connect(to: entry.address) }, for: .touchUpInside)
+
+        let title = label(entry.address.url.host ?? "KonomiTVサーバー", style: .subheadline, weight: .semibold)
+        let url = label(entry.address.url.absoluteString, style: .footnote, color: .secondaryLabel)
+        url.lineBreakMode = .byCharWrapping
+        let detail: String
+        if entry.address == currentAddress {
+            detail = "現在の接続先"
+        } else if entry.lastConnectedAt == .distantPast {
+            detail = "保存済みの接続先"
+        } else {
+            detail = "最終接続: " + DateFormatter.localizedString(from: entry.lastConnectedAt, dateStyle: .short, timeStyle: .short)
+        }
+        let text = UIStackView(arrangedSubviews: [title, url, label(detail, style: .caption1, color: accent)])
+        text.axis = .vertical
+        text.spacing = 6
+        text.isUserInteractionEnabled = false
+        text.translatesAutoresizingMaskIntoConstraints = false
+        connect.addSubview(text)
+        NSLayoutConstraint.activate([
+            text.topAnchor.constraint(equalTo: connect.topAnchor),
+            text.bottomAnchor.constraint(equalTo: connect.bottomAnchor),
+            text.leadingAnchor.constraint(equalTo: connect.leadingAnchor),
+            text.trailingAnchor.constraint(equalTo: connect.trailingAnchor),
+            connect.heightAnchor.constraint(greaterThanOrEqualToConstant: 44)
+        ])
+
+        let pin = historyAction(
+            title: entry.isPinned ? "ピン解除" : "ピン留め",
+            symbol: entry.isPinned ? "pin.fill" : "pin",
+            color: accent
+        )
+        pin.accessibilityIdentifier = "pinServer"
+        pin.accessibilityLabel = entry.isPinned ? "この接続先のピン留めを解除" : "この接続先をピン留め"
+        pin.addAction(UIAction { [weak self] _ in
+            guard let self = self else { return }
+            self.settings.setConnectionPinned(entry.address, isPinned: !entry.isPinned)
+            self.refreshHistory()
+            UIAccessibility.post(notification: .announcement, argument: entry.isPinned ? "ピン留めを解除しました" : "ピン留めしました")
+        }, for: .touchUpInside)
+
+        let delete = historyAction(title: "削除", symbol: "trash", color: .systemRed)
+        delete.accessibilityIdentifier = "deleteServerHistory"
+        delete.accessibilityLabel = "この接続先を履歴から削除"
+        delete.addAction(UIAction { [weak self] _ in self?.confirmDelete(entry.address) }, for: .touchUpInside)
+        let controls = UIStackView(arrangedSubviews: [pin, delete])
+        controls.axis = .horizontal
+        controls.spacing = 8
+        controls.distribution = .fillEqually
+
+        let row = UIStackView(arrangedSubviews: [connect, controls])
+        row.axis = .vertical
+        row.spacing = 14
+        return card(containing: row)
+    }
+
+    private func historyAction(title: String, symbol: String, color: UIColor) -> UIButton {
+        var configuration = UIButton.Configuration.tinted()
+        configuration.title = title
+        configuration.image = UIImage(systemName: symbol)
+        configuration.imagePadding = 6
+        configuration.titleLineBreakMode = .byWordWrapping
+        configuration.baseForegroundColor = color
+        configuration.baseBackgroundColor = color.withAlphaComponent(0.12)
+        configuration.cornerStyle = .medium
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 10, leading: 8, bottom: 10, trailing: 8)
+        let button = UIButton(configuration: configuration)
+        button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
+        return button
+    }
+
+    private func confirmDelete(_ address: ServerAddress) {
+        let confirmation = UIAlertController(
+            title: "履歴から削除しますか？",
+            message: "\(address.url.absoluteString)\n\n接続履歴からこのURLを削除します。現在の接続はそのまま続きます。",
+            preferredStyle: .alert
+        )
+        confirmation.addAction(UIAlertAction(title: "キャンセル", style: .cancel))
+        confirmation.addAction(UIAlertAction(title: "削除", style: .destructive) { [weak self] _ in
+            guard let self = self else { return }
+            self.settings.deleteConnection(address)
+            self.refreshHistory()
+            UIAccessibility.post(notification: .announcement, argument: "接続履歴から削除しました")
+        })
+        present(confirmation, animated: true)
+    }
+
     @objc private func addressChanged() {
         errorLabel.isHidden = true
         updateSaveState()
@@ -256,6 +381,13 @@ final class SettingsViewController: UIViewController, UITextFieldDelegate {
             UIAccessibility.post(notification: .announcement, argument: error.localizedDescription)
             return
         }
+        connect(to: address)
+    }
+
+    private func connect(to address: ServerAddress) {
+        addressField.text = address.url.absoluteString
+        errorLabel.isHidden = true
+        updateSaveState()
         view.endEditing(true)
         guard let currentAddress, currentAddress != address else {
             onSave(address)
