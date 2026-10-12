@@ -83,14 +83,6 @@ jobs:
       - name: Build unsigned device IPA
         run: bash scripts/build-ipa.sh
 
-      - name: Capture the initial settings screen
-        env:
-          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
-        run: |
-          xcrun simctl launch --terminate-running-process "$SIMULATOR_UDID" "$BUNDLE_IDENTIFIER"
-          sleep 3
-          xcrun simctl io "$SIMULATOR_UDID" screenshot dist/Konomios-setup.png
-
       - name: Upload IPA for AltStore Classic
         uses: actions/upload-artifact@v4
         with:
@@ -98,9 +90,26 @@ jobs:
           path: |
             dist/KonomiTV.ipa
             dist/KonomiTV.ipa.sha256
-            dist/Konomios-setup.png
           if-no-files-found: error
           retention-days: 30
+
+      - name: Capture the initial settings screen
+        env:
+          SIMULATOR_UDID: ${{ steps.simulator.outputs.udid }}
+        run: |
+          xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+          xcrun simctl install "$SIMULATOR_UDID" build/Simulator/Build/Products/Debug-iphonesimulator/KonomiTV.app
+          xcrun simctl launch --terminate-running-process "$SIMULATOR_UDID" "$BUNDLE_IDENTIFIER"
+          sleep 5
+          xcrun simctl io "$SIMULATOR_UDID" screenshot dist/Konomios-setup.png
+
+      - name: Upload settings preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: Konomios-preview-${{ github.run_number }}
+          path: dist/Konomios-setup.png
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Upload simulator test report
         if: always()
