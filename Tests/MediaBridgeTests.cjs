@@ -25,7 +25,7 @@ class Element extends Target {
         this.children = [];
         this.parentNode = null;
         this.isConnected = false;
-        this.style = {};
+        this.style = { setProperty(name, value) { this[name] = String(value); } };
         this.hidden = false;
         this.classList = { contains: name => this.className.split(/\s+/).includes(name) };
     }
@@ -105,6 +105,10 @@ function harness(options = {}) {
         webkitSetPresentationMode(mode) {
             if (options.throwWebKit) { calls.push(['webkit', mode]); throw new Error('unavailable'); }
             if (options.silentWebKit) { calls.push(['webkit', mode]); return; }
+            if (options.pauseOnPiPRequest && mode === 'picture-in-picture') {
+                this.paused = true;
+                this.emit('pause');
+            }
             this.webkitPresentationMode = mode;
             calls.push(['webkit', mode]);
             this.emit('webkitpresentationmodechanged');
@@ -134,6 +138,8 @@ function harness(options = {}) {
     }
     if (surfaces.navigation && options.hiddenNavigation) surfaces.navigation.style.display = 'none';
     const mask = body.appendChild(new Element('div', 'dplayer-mask'));
+    const fullButtons = [body.appendChild(new Element('button', 'dplayer-full-icon')),
+        body.appendChild(new Element('button', 'dplayer-full-in-icon'))];
     let maskClicks = 0;
     mask.addEventListener('click', () => maskClicks++);
     Object.assign(document, {
@@ -195,7 +201,7 @@ function harness(options = {}) {
         });
         return { prevented, stopped };
     };
-    return { window, document, video, button, messages, calls, click, location, surfaces,
+    return { window, document, video, button, fullButtons, messages, calls, click, location, surfaces,
         get maskClicks() { return maskClicks; },
         clickElement(target) {
             let prevented = false;
@@ -241,7 +247,7 @@ test('starts WebKit PiP from the same click and prevents duplicate DPlayer reque
     assert.ok(h.messages.some(message => message.event === 'pip' && message.active));
     h.click();
     assert.equal(h.video.webkitPresentationMode, 'inline');
-    assert.equal(h.messages.at(-1).active, false);
+    assert.equal(h.messages.filter(message => message.event === 'pip').at(-1).active, false);
 });
 
 test('makes a WebKit-capable button available when standard PiP detection fails', () => {
@@ -437,209 +443,91 @@ test('removes the recovery footer when a late Vue mount creates the recognized h
     assert.equal(h.document.querySelector('[data-konomi-native-actions="fallback"]'), null);
 });
 
-test('prepares a playing video without starting PiP for Control Center or an incoming call', () => {
+test('replaces both fullscreen buttons with a native landscape toggle without touching playback', () => {
     const h = harness();
-    assert.equal(h.window.KonomiTVNative.prepareForBackground(), true);
-    assert.equal(h.calls.length, 0);
-    h.window.KonomiTVNative.didBecomeActive();
-    assert.equal(h.window.KonomiTVNative.enterPictureInPictureForBackground(), false);
-    assert.equal(h.calls.length, 0);
+    for (const button of h.fullButtons) {
+        const icon = button.appendChild(new Element('svg'));
+        assert.deepEqual(h.clickElement(icon), { prevented: true, stopped: true });
+        assert.equal(h.messages.at(-1).event, 'landscape-toggle');
+    }
+    assert.deepEqual(h.calls, []);
+    assert.equal(h.document.fullscreenElement, undefined);
 });
 
-test('starts automatic WebKit PiP from the prepared video after an OS pause', () => {
+test('native orientation state updates button labels and survives player UI replacement', () => {
     const h = harness();
-    assert.equal(h.window.KonomiTVNative.prepareForBackground(), true);
-    h.video.paused = true;
-    h.video.emit('pause');
-    h.setHidden(true);
-    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture'], ['play']]);
-    assert.equal(h.video.paused, false);
-    assert.equal(h.video.webkitPresentationMode, 'picture-in-picture');
-    assert.ok(h.messages.some(message => message.event === 'pip' && message.active));
-    assert.equal(h.window.KonomiTVNative.enterPictureInPictureForBackground(), false);
-    assert.equal(h.calls.length, 2);
+    h.window.KonomiTVNative.setLandscapeLocked(true);
+    assert.equal(h.fullButtons[0].getAttribute('aria-pressed'), 'true');
+    assert.equal(h.fullButtons[0].getAttribute('aria-label'), '横画面固定を解除');
+    const replacement = h.document.body.appendChild(new Element('button', 'dplayer-full-icon'));
+    h.mutate();
+    assert.equal(replacement.getAttribute('title'), '横画面固定を解除');
+    h.window.KonomiTVNative.setLandscapeLocked(false);
+    assert.equal(replacement.getAttribute('aria-pressed'), 'false');
+    assert.equal(replacement.getAttribute('data-balloon'), '横画面に固定');
 });
 
-test('resumes an OS-paused automatic candidate only after an actual delayed PiP event', () => {
-    const h = harness({ silentWebKit: true });
-    h.window.KonomiTVNative.prepareForBackground();
-    h.video.paused = true;
-    h.video.emit('pause');
-    h.setHidden(true);
-    h.advanceTime(2500);
-    h.runDueTimers();
-    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture']]);
-    assert.equal(h.video.paused, true);
-    assert.ok(!h.messages.some(message => message.event === 'pip' && message.active));
-    h.video.webkitPresentationMode = 'picture-in-picture';
-    h.video.emit('webkitpresentationmodechanged');
-    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture'], ['play']]);
-    assert.equal(h.video.paused, false);
-    h.video.paused = true;
-    h.video.emit('pause');
+test('keeps landscape lock across channel changes and releases it when leaving live or recorded watch', () => {
+    const h = harness();
+    h.window.KonomiTVNative.setLandscapeLocked(true);
+    for (const pathname of ['/tv/watch/gr022', '/videos/watch/42']) {
+        h.location.pathname = pathname;
+        h.location.href = h.location.origin + pathname;
+        h.window.KonomiTVNative.refresh();
+        assert.ok(!h.messages.some(message => message.event === 'landscape-exit'));
+    }
+    h.location.pathname = '/settings';
+    h.location.href = h.location.origin + '/settings';
     h.window.KonomiTVNative.refresh();
-    assert.equal(h.calls.filter(call => call[0] === 'play').length, 1);
+    assert.equal(h.messages.filter(message => message.event === 'landscape-exit').length, 1);
+    assert.equal(h.fullButtons[0].getAttribute('aria-pressed'), 'false');
 });
 
-test('does not resume an unprepared manually paused video on manual PiP entry', () => {
-    const h = harness({ paused: true });
-    h.click();
-    assert.equal(h.video.webkitPresentationMode, 'picture-in-picture');
-    assert.equal(h.video.paused, true);
-    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture']]);
+test('fullscreen shortcut and video double click request native orientation, excluding text input', () => {
+    const h = harness();
+    const event = { code: 'KeyF', key: 'f', preventDefault() {}, stopImmediatePropagation() {} };
+    h.window.emit('keydown', event);
+    assert.equal(h.messages.at(-1).event, 'landscape-toggle');
+    const count = h.messages.length;
+    h.window.emit('keydown', { ...event, target: { tagName: 'INPUT' } });
+    h.window.emit('keydown', { ...event, target: { isContentEditable: true } });
+    h.window.emit('keydown', { ...event, ctrlKey: true });
+    h.window.emit('keydown', { ...event, repeat: true });
+    assert.equal(h.messages.length, count);
+    h.document.emit('dblclick', { ...event, target: new Element('div', 'dplayer-video-wrap') });
+    assert.equal(h.messages.at(-1).event, 'landscape-toggle');
+    h.window.KonomiTVNative.setLandscapeLocked(true);
+    h.window.emit('keydown', { ...event, code: 'Escape', key: 'Escape' });
+    assert.equal(h.messages.at(-1).event, 'landscape-exit');
 });
 
-test('a rejected automatic playback resume remains quiet', async () => {
-    const h = harness({ rejectPlay: true });
-    h.window.KonomiTVNative.prepareForBackground();
-    h.video.paused = true;
-    h.setHidden(true);
-    await Promise.resolve();
-    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture'], ['play']]);
-    assert.equal(h.video.paused, true);
-    assert.ok(!h.messages.some(message => message.event === 'error'));
-});
-
-test('starts automatic PiP directly on hidden only when the current video is playing', () => {
-    const playing = harness();
-    playing.setHidden(true);
-    assert.deepEqual(playing.calls, [['webkit', 'picture-in-picture']]);
-    const paused = harness({ paused: true });
-    paused.setHidden(true);
-    assert.equal(paused.calls.length, 0);
-});
-
-test('does not automatically start a video paused before background preparation', () => {
-    for (const userPaused of [false, true]) {
-        const h = harness({ paused: !userPaused });
-        if (userPaused) { h.video.paused = true; h.video.emit('pause'); }
-        assert.equal(h.window.KonomiTVNative.prepareForBackground(), false);
-        h.video.paused = false;
+test('Home visibility changes never start PiP or resume a paused video automatically', () => {
+    for (const paused of [false, true]) {
+        const h = harness({ paused });
         h.setHidden(true);
-        assert.equal(h.calls.length, 0);
+        h.setHidden(false);
+        h.window.KonomiTVNative.refresh();
+        assert.deepEqual(h.calls, []);
+        assert.equal(h.video.paused, paused);
     }
 });
 
-test('rejects ended, unloaded, disconnected or replaced background candidates', () => {
-    const invalidate = [
-        h => { h.video.ended = true; h.video.emit('ended'); },
-        h => { h.video.readyState = 0; h.video.emit('emptied'); },
-        h => { h.video.isConnected = false; },
-        h => { h.replaceVideos([new Element('video')]); },
-        h => { h.replaceVideos([]); }
-    ];
-    for (const change of invalidate) {
-        const h = harness();
-        h.window.KonomiTVNative.prepareForBackground();
-        change(h);
-        assert.equal(h.window.KonomiTVNative.enterPictureInPictureForBackground(), false);
-        assert.equal(h.calls.length, 0);
-    }
-});
-
-test('does not transfer a prepared snapshot to a newly playing replacement video', () => {
+test('manually started PiP remains active across Home and foreground visibility changes', () => {
     const h = harness();
-    h.window.KonomiTVNative.prepareForBackground();
-    const next = new Element('video');
-    Object.assign(next, { paused: false, ended: false, readyState: 4, isConnected: true,
-        webkitSupportsPresentationMode: () => true,
-        webkitSetPresentationMode: mode => h.calls.push(['replacement', mode]) });
-    h.replaceVideos([next]);
+    h.click();
     h.setHidden(true);
-    assert.equal(h.calls.length, 0);
-});
-
-test('expires prepared candidates and cancels them when the page URL changes', () => {
-    for (const change of [
-        h => h.advanceTime(5001),
-        h => { h.location.pathname = '/videos/watch/42'; h.location.href = h.location.origin + h.location.pathname; },
-        h => { h.location.href += '?quality=720p'; }
-    ]) {
-        const h = harness();
-        h.window.KonomiTVNative.prepareForBackground();
-        change(h);
-        assert.equal(h.window.KonomiTVNative.enterPictureInPictureForBackground(), false);
-        assert.equal(h.calls.length, 0);
-    }
-});
-
-test('cancels a prepared background candidate on quality selection before PiP has started', () => {
-    const h = harness();
-    h.window.KonomiTVNative.prepareForBackground();
-    assert.deepEqual(h.click('.dplayer-setting-quality-item'), { prevented: false, stopped: false });
-    h.setHidden(true);
-    assert.equal(h.calls.length, 0);
-});
-
-test('keeps one automatic request pending across repeated lifecycle calls', () => {
-    const h = harness({ silentWebKit: true });
-    h.window.KonomiTVNative.prepareForBackground();
-    assert.equal(h.window.KonomiTVNative.enterPictureInPictureForBackground(), true);
-    assert.equal(h.window.KonomiTVNative.enterPictureInPictureForBackground(), true);
-    h.window.KonomiTVNative.prepareForBackground();
-    h.setHidden(true);
-    assert.equal(h.calls.length, 1);
-    assert.ok(!h.messages.some(message => message.event === 'pip' && message.active));
-    h.video.webkitPresentationMode = 'picture-in-picture';
-    h.video.emit('webkitpresentationmodechanged');
-    assert.ok(h.messages.some(message => message.event === 'pip' && message.active));
-    assert.equal(h.window.KonomiTVNative.enterPictureInPictureForBackground(), false);
-    assert.equal(h.calls.length, 1);
-});
-
-test('rejects a pending automatic candidate after its video is replaced', () => {
-    const h = harness({ silentWebKit: true });
-    h.window.KonomiTVNative.prepareForBackground();
-    h.window.KonomiTVNative.enterPictureInPictureForBackground();
-    h.replaceVideos([]);
-    assert.equal(h.window.KonomiTVNative.enterPictureInPictureForBackground(), false);
-});
-
-test('does not toggle existing manual PiP or duplicate a pending manual request in background', () => {
-    for (const options of [{}, { silentWebKit: true }]) {
-        const h = harness(options);
-        h.click();
-        h.window.KonomiTVNative.prepareForBackground();
-        assert.equal(h.window.KonomiTVNative.enterPictureInPictureForBackground(), false);
-        assert.equal(h.calls.length, 1);
-    }
-});
-
-test('automatically uses only prefixed WebKit API while retaining manual standard PiP', () => {
-    const h = harness({ webKit: false });
-    assert.equal(h.window.KonomiTVNative.prepareForBackground(), false);
-    h.setHidden(true);
-    assert.equal(h.calls.length, 0);
     h.setHidden(false);
-    h.click();
-    assert.deepEqual(h.calls, [['standard']]);
+    assert.deepEqual(h.calls, [['webkit', 'picture-in-picture']]);
+    assert.equal(h.video.webkitPresentationMode, 'picture-in-picture');
 });
 
-test('automatic PiP failures remain silent without falsely announcing success', () => {
-    for (const options of [{ silentWebKit: true }, { throwWebKit: true }]) {
-        const h = harness(options);
-        h.window.KonomiTVNative.prepareForBackground();
-        h.setHidden(true);
-        h.runTimers();
-        h.window.KonomiTVNative.enterPictureInPictureForBackground();
-        assert.equal(h.calls.length, 1);
-        assert.ok(!h.messages.some(message => message.event === 'error'));
-        assert.ok(!h.messages.some(message => message.event === 'pip' && message.active));
-    }
-});
-
-test('sets advisory automatic PiP attributes without using them as evidence of support', () => {
-    const h = harness({ webKit: false, standard: false });
-    assert.equal(h.video.attributes.autopictureinpicture, '');
-    assert.equal(h.video.autoPictureInPicture, true);
-    h.setHidden(true);
-    assert.equal(h.calls.length, 0);
-});
-
-test('a standard PiP exception releases the pending request so manual retry remains possible', () => {
-    const h = harness({ webKit: false, throwStandard: true });
-    h.click();
-    h.click();
-    assert.equal(h.calls.length, 2);
-    assert.equal(h.messages.filter(message => message.event === 'error').length, 2);
+test('leaves the original media library and media properties untouched', () => {
+    const h = harness();
+    const library = { createPlayer: () => ({}) };
+    h.window.mpegts = library;
+    assert.equal(h.window.mpegts, library);
+    assert.equal(Object.getOwnPropertyDescriptor(h.window, 'mpegts').set, undefined);
+    assert.equal(Object.hasOwn(h.video, 'muted'), false);
+    assert.equal(h.window.KonomiTVNative.setNativePlayback, undefined);
+    assert.equal(h.window.KonomiTVNative.prepareForBackground, undefined);
 });

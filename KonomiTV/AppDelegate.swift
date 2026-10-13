@@ -1,39 +1,27 @@
 import UIKit
-import AVFAudio
 
-/// WebView の所有者をアプリのライフサイクルに合わせて保持する。
+/// アプリ全体の設定を行い、画面のライフサイクルは SceneDelegate に委ねる。
 @main
 final class AppDelegate: UIResponder, UIApplicationDelegate {
-    var window: UIWindow?
-    private var browser: WebViewController?
-
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        let browser = WebViewController()
-        self.browser = browser
-        let window = UIWindow(frame: UIScreen.main.bounds)
-        window.overrideUserInterfaceStyle = .dark
-        window.rootViewController = browser
-        window.makeKeyAndVisible()
-        self.window = window
         return true
     }
 
     func application(_ application: UIApplication,
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
+    }
+
+    func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
-        browser?.supportedInterfaceOrientations ?? .allButUpsideDown
-    }
-
-    func applicationWillResignActive(_ application: UIApplication) {
-        browser?.prepareForBackground()
-    }
-
-    func applicationDidEnterBackground(_ application: UIApplication) {
-        browser?.enterBackground()
-    }
-
-    func applicationDidBecomeActive(_ application: UIApplication) {
-        // PiP から戻っても load/reload を呼ばず、同じ Web プレイヤーを維持する。
-        browser?.becomeActive()
+        if let delegate = window?.windowScene?.delegate as? SceneDelegate {
+            return delegate.supportedInterfaceOrientations
+        }
+        if UIDevice.current.userInterfaceIdiom == .pad { return .all }
+        return .allButUpsideDown
     }
 }

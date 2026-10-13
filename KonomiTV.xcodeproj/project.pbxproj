@@ -13,6 +13,7 @@
 		B00000000000000000000005 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000005 /* AppSettings.swift */; };
 		B00000000000000000000006 /* SettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000006 /* SettingsViewController.swift */; };
 		B00000000000000000000007 /* PlaybackKeepAlive.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000007 /* PlaybackKeepAlive.swift */; };
+		B00000000000000000000008 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000008 /* SceneDelegate.swift */; };
 		B00000000000000000000011 /* MediaBridge.js in Resources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000011 /* MediaBridge.js */; };
 		B00000000000000000000012 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000012 /* Assets.xcassets */; };
 		B00000000000000000000013 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000013 /* PrivacyInfo.xcprivacy */; };
@@ -20,6 +21,7 @@
 		B00000000000000000000022 /* PlaybackSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000022 /* PlaybackSessionTests.swift */; };
 		B00000000000000000000023 /* AppSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000023 /* AppSettingsTests.swift */; };
 		B00000000000000000000024 /* WebViewLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000024 /* WebViewLayoutTests.swift */; };
+		B00000000000000000000025 /* SceneLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000025 /* SceneLifecycleTests.swift */; };
 		B00000000000000000000031 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000001 /* UIKit.framework */; };
 		B00000000000000000000032 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* WebKit.framework */; };
 		B00000000000000000000033 /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F00000000000000000000003 /* AVFoundation.framework */; };
@@ -43,6 +45,7 @@
 		D00000000000000000000005 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		D00000000000000000000006 /* SettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewController.swift; sourceTree = "<group>"; };
 		D00000000000000000000007 /* PlaybackKeepAlive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackKeepAlive.swift; sourceTree = "<group>"; };
+		D00000000000000000000008 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		D00000000000000000000011 /* MediaBridge.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = MediaBridge.js; sourceTree = "<group>"; };
 		D00000000000000000000012 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D00000000000000000000013 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -51,6 +54,7 @@
 		D00000000000000000000022 /* PlaybackSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackSessionTests.swift; sourceTree = "<group>"; };
 		D00000000000000000000023 /* AppSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsTests.swift; sourceTree = "<group>"; };
 		D00000000000000000000024 /* WebViewLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewLayoutTests.swift; sourceTree = "<group>"; };
+		D00000000000000000000025 /* SceneLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneLifecycleTests.swift; sourceTree = "<group>"; };
 		D000000000000000000000F1 /* KonomiTV.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KonomiTV.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D000000000000000000000F2 /* KonomiTVTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KonomiTVTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F00000000000000000000001 /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
@@ -76,11 +80,11 @@
 		};
 		C00000000000000000000002 /* KonomiTV */ = {
 			isa = PBXGroup;
-			children = (D00000000000000000000001, D00000000000000000000002, D00000000000000000000003, D00000000000000000000004, D00000000000000000000005, D00000000000000000000006, D00000000000000000000007, C00000000000000000000006 /* Resources */, D00000000000000000000012, D00000000000000000000013, D00000000000000000000014,);
+			children = (D00000000000000000000001, D00000000000000000000008, D00000000000000000000002, D00000000000000000000003, D00000000000000000000004, D00000000000000000000005, D00000000000000000000006, D00000000000000000000007, C00000000000000000000006, D00000000000000000000012, D00000000000000000000013, D00000000000000000000014,);
 			path = KonomiTV;
 			sourceTree = "<group>";
 		};
-		C00000000000000000000003 /* Tests */ = {isa = PBXGroup; children = (D00000000000000000000021, D00000000000000000000022, D00000000000000000000023, D00000000000000000000024,); path = Tests; sourceTree = "<group>"; };
+		C00000000000000000000003 /* Tests */ = {isa = PBXGroup; children = (D00000000000000000000021, D00000000000000000000022, D00000000000000000000023, D00000000000000000000024, D00000000000000000000025,); path = Tests; sourceTree = "<group>"; };
 		C00000000000000000000004 /* Frameworks */ = {isa = PBXGroup; children = (F00000000000000000000001, F00000000000000000000002, F00000000000000000000003,); name = Frameworks; sourceTree = "<group>"; };
 		C00000000000000000000005 /* Products */ = {isa = PBXGroup; children = (D000000000000000000000F1, D000000000000000000000F2,); name = Products; sourceTree = "<group>"; };
 		C00000000000000000000006 /* Resources */ = {isa = PBXGroup; children = (D00000000000000000000011,); path = Resources; sourceTree = "<group>"; };
@@ -141,8 +145,8 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		C00000000000000000000011 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000001, B00000000000000000000002, B00000000000000000000003, B00000000000000000000004, B00000000000000000000005, B00000000000000000000006, B00000000000000000000007,); runOnlyForDeploymentPostprocessing = 0; };
-		C00000000000000000000012 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000021, B00000000000000000000022, B00000000000000000000023, B00000000000000000000024,); runOnlyForDeploymentPostprocessing = 0; };
+		C00000000000000000000011 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000001, B00000000000000000000008, B00000000000000000000002, B00000000000000000000003, B00000000000000000000004, B00000000000000000000005, B00000000000000000000006, B00000000000000000000007,); runOnlyForDeploymentPostprocessing = 0; };
+		C00000000000000000000012 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (B00000000000000000000021, B00000000000000000000022, B00000000000000000000023, B00000000000000000000024, B00000000000000000000025,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -155,7 +159,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 11;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KonomiTV/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks",);
@@ -175,7 +179,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 11;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KonomiTV/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks",);

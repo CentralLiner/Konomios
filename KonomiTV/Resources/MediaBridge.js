@@ -11,23 +11,40 @@
     const boundVideos = new WeakSet();
     const startChecks = new WeakMap();
     const pendingStandardRequests = new WeakSet();
-    const pendingAutomaticRequests = new WeakSet();
     let pipVideo = null;
     let sessionURL = null;
     let playbackPath = location.pathname;
     let scheduled = false;
-    let backgroundPhase = 'active';
-    let backgroundPrepared = false;
-    let backgroundCandidate = null;
-    let backgroundAttempted = false;
     let fallbackEnabled = false;
+    let landscapeLocked = false;
+    const isWatchRoute = () => /\/(?:tv|videos)\/watch\/[^/]+\/?$/.test(location.pathname);
+    const landscapeButtons = () => [
+        ...document.querySelectorAll('.dplayer-full-icon'),
+        ...document.querySelectorAll('.dplayer-full-in-icon')
+    ];
+    const updateLandscapeButtons = () => {
+        const label = landscapeLocked ? '横画面固定を解除' : '横画面に固定';
+        landscapeButtons().forEach(button => {
+            button.setAttribute('aria-label', label);
+            button.setAttribute('aria-pressed', String(landscapeLocked));
+            button.setAttribute('title', label);
+            button.setAttribute('data-balloon', label);
+        });
+    };
+    const setLandscapeLocked = locked => {
+        landscapeLocked = locked === true;
+        updateLandscapeButtons();
+    };
 
     const synchronizeRoute = () => {
         if (playbackPath === location.pathname) return;
         playbackPath = location.pathname;
         sessionURL = null;
-        backgroundCandidate = null;
         post('session', { url: null });
+        if (landscapeLocked && !isWatchRoute()) {
+            setLandscapeLocked(false);
+            post('landscape-exit');
+        }
     };
 
     // 実際に再生される DPlayer の video を優先。画質変更で要素は交換される。
@@ -48,8 +65,16 @@
         && typeof video?.requestPictureInPicture === 'function' && !video.disablePictureInPicture;
     const isPlaying = video => !!video && video.isConnected && !video.paused
         && !video.ended && video.readyState > 0;
+    const reportMediaState = (video, kind) => {
+        post('media-diagnostic', {
+            kind, paused: video.paused, ended: video.ended, readyState: video.readyState,
+            time: Number(video.currentTime) || 0, hidden: document.hidden,
+            mode: video.webkitPresentationMode || 'inline',
+            bufferedEnd: video.buffered?.length ? video.buffered.end(video.buffered.length - 1) : 0,
+            errorCode: video.error?.code || 0
+        });
+    };
     const clearStartCheck = video => {
-        pendingAutomaticRequests.delete(video);
         if (!startChecks.has(video)) return;
         clearTimeout(startChecks.get(video));
         startChecks.delete(video);
@@ -57,10 +82,6 @@
     const isRequestPending = video => startChecks.has(video) || pendingStandardRequests.has(video);
     const publishPiP = video => {
         const active = inPiP(video);
-        const resumeAutomaticPlayback = active && pendingAutomaticRequests.has(video)
-            && backgroundCandidate?.video === video && backgroundCandidate.href === location.href
-            && Date.now() - backgroundCandidate.preparedAt <= 5000
-            && video === activeVideo() && video.isConnected && !video.ended && video.readyState > 0;
         if (active) {
             clearStartCheck(video);
             pendingStandardRequests.delete(video);
@@ -68,11 +89,6 @@
         if (active) pipVideo = video;
         else if (pipVideo === video) pipVideo = null;
         post('pip', { active: !!pipVideo && inPiP(pipVideo) });
-        if (resumeAutomaticPlayback && video.paused) {
-            // 背景移行時に OS が停止した、準備時には再生中だった動画だけを実際の PiP 開始後に再開する。
-            // 手動で停止した PiP や要求しただけの動画は再開しない。
-            try { Promise.resolve(video.play()).catch(() => {}); } catch (_) { /* 自動再開の拒否は通知しない */ }
-        }
     };
     const publishPlayback = () => {
         // 新しい video がすでに存在しても、切断された旧 PiP は保持しない。
@@ -82,10 +98,6 @@
         }
         const video = activeVideo();
         post('playback', { playing: isPlaying(video) });
-        if (backgroundCandidate && (!backgroundCandidate.video.isConnected
-            || backgroundCandidate.video !== video || backgroundCandidate.video.ended)) {
-            backgroundCandidate = null;
-        }
         if (!video) {
             sessionURL = null;
             post('session', { url: null });
@@ -96,65 +108,20 @@
         post('error', { message });
     };
 
-    const requestWebKitPiP = (video, automatic) => {
+    const requestWebKitPiP = video => {
         if (inPiP(video) || isRequestPending(video)) return false;
-        if (automatic) pendingAutomaticRequests.add(video);
-        // 同期的に presentationmodechanged が来ても、保留状態を確実に解除できる順序にする。
         startChecks.set(video, setTimeout(() => {
             startChecks.delete(video);
-            pendingAutomaticRequests.delete(video);
-            if (!automatic && video.isConnected && !inPiP(video)) showError();
-        }, automatic ? 5000 : 2000));
+            if (video.isConnected && !inPiP(video)) showError();
+        }, 2000));
         try {
             video.webkitSetPresentationMode('picture-in-picture');
-            // 要求しただけでは成功扱いにしない。実際の PiP イベントが native に通知する。
             return true;
         } catch (_) {
             clearStartCheck(video);
-            if (!automatic) showError();
+            showError();
             return false;
         }
-    };
-
-    const prepareForBackground = () => {
-        synchronizeRoute();
-        if (backgroundPhase !== 'active') return !!backgroundCandidate;
-        backgroundPhase = 'preparing';
-        backgroundPrepared = true;
-        backgroundAttempted = false;
-        const video = activeVideo();
-        backgroundCandidate = isPlaying(video) && canUseWebKitPiP(video)
-            ? { video, href: location.href, preparedAt: Date.now() } : null;
-        // willResignActive はコントロールセンターや電話でも発生するため、ここでは開始しない。
-        return !!backgroundCandidate;
-    };
-
-    const enterPictureInPictureForBackground = () => {
-        synchronizeRoute();
-        if (!backgroundPrepared) {
-            // foreground 復帰後に遅れて届いた native 要求は無視する。
-            if (!document.hidden) return false;
-            backgroundPrepared = true;
-            const video = activeVideo();
-            backgroundCandidate = isPlaying(video) && canUseWebKitPiP(video)
-                ? { video, href: location.href, preparedAt: Date.now() } : null;
-        }
-        backgroundPhase = 'background';
-        const candidate = backgroundCandidate;
-        const validCandidate = !!candidate && candidate.href === location.href
-            && Date.now() - candidate.preparedAt <= 5000
-            && candidate.video.isConnected && candidate.video === activeVideo()
-            && !candidate.video.ended && candidate.video.readyState > 0
-            && canUseWebKitPiP(candidate.video);
-        if (backgroundAttempted) return validCandidate && !inPiP(candidate.video)
-            && pendingAutomaticRequests.has(candidate.video);
-        backgroundAttempted = true;
-        if (!validCandidate
-            || inPiP(candidate.video)
-            || isRequestPending(candidate.video)) return false;
-        // prepare 後の OS による pause は許容し、準備時に停止中だった動画は開始しない。
-        // 標準 requestPictureInPicture は新しいジェスチャーが必要なので背景では使用しない。
-        return requestWebKitPiP(candidate.video, true);
     };
 
     const styleID = 'konomi-native-actions-style';
@@ -163,6 +130,8 @@
         const style = document.createElement('style');
         style.id = styleID;
         style.textContent = `
+            /* The native browser extends through the home indicator area. */
+            .route-container:has(> .watch-container) { border-bottom:0 !important; }
             .konomi-native-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
             .konomi-native-actions[hidden] { display:none !important; }
             .konomi-native-action { font:inherit; font-size:13px; color:inherit; cursor:pointer;
@@ -250,15 +219,14 @@
             if (boundVideos.has(video)) return;
             boundVideos.add(video);
             video.setAttribute('playsinline', '');
-            video.setAttribute('autopictureinpicture', '');
-            try { if ('autoPictureInPicture' in video) video.autoPictureInPicture = true; } catch (_) { /* 補助設定 */ }
             video.addEventListener('enterpictureinpicture', () => publishPiP(video));
             video.addEventListener('leavepictureinpicture', () => publishPiP(video));
             video.addEventListener('webkitpresentationmodechanged', () => publishPiP(video));
+            ['playing', 'pause', 'waiting', 'stalled', 'error', 'webkitpresentationmodechanged'].forEach(event => {
+                video.addEventListener(event, () => reportMediaState(video, event));
+            });
             ['loadedmetadata', 'play', 'pause', 'emptied', 'ended'].forEach(event => {
                 video.addEventListener(event, () => {
-                    if (backgroundCandidate?.video === video && (event === 'ended' || event === 'emptied'
-                        || (event === 'pause' && backgroundPhase === 'active'))) backgroundCandidate = null;
                     updateButtons();
                     publishPlayback();
                 });
@@ -266,6 +234,7 @@
         });
         injectActions();
         updateButtons();
+        updateLandscapeButtons();
         publishPlayback();
         // 新規 document でも初期状態を通知し、前ページの native PiP 状態を解除する。
         const actualPiPVideo = Array.from(document.querySelectorAll('.dplayer video')).find(inPiP);
@@ -283,6 +252,14 @@
 
     // タップの同期処理内から要求し、native の非同期 evaluateJavaScript にユーザー操作を渡さない。
     document.addEventListener('click', event => {
+        const landscapeButton = event.target?.closest?.('.dplayer-full-icon')
+            || event.target?.closest?.('.dplayer-full-in-icon');
+        if (landscapeButton && isWatchRoute()) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            post('landscape-toggle');
+            return;
+        }
         const action = event.target?.closest?.('[data-konomi-native-action]')?.getAttribute('data-konomi-native-action');
         if (action === 'settings' || action === 'reload') {
             event.preventDefault();
@@ -293,7 +270,6 @@
         }
         // 古い video が残ったまま画質を切り替えないよう、既存 UI の操作前に PiP を終了する。
         if (event.target?.closest?.('.dplayer-setting-quality-item')) {
-            backgroundCandidate = null;
             if (!pipVideo) return;
             try {
                 if (pipVideo.webkitPresentationMode === 'picture-in-picture') {
@@ -310,7 +286,6 @@
         if (!video) return;
         event.preventDefault();
         event.stopImmediatePropagation();
-        backgroundCandidate = null;
         try {
             if (inPiP(video)) {
                 clearStartCheck(video);
@@ -323,7 +298,7 @@
             } else if (isRequestPending(video)) {
                 return;
             } else if (canUseWebKitPiP(video)) {
-                requestWebKitPiP(video, false);
+                requestWebKitPiP(video);
             } else if (canUseStandardPiP(video)) {
                 pendingStandardRequests.add(video);
                 Promise.resolve(video.requestPictureInPicture()).then(() => pendingStandardRequests.delete(video), () => {
@@ -338,7 +313,26 @@
             showError();
         }
     }, true);
-
+    document.addEventListener('dblclick', event => {
+        if (!isWatchRoute() || !event.target?.closest?.('.dplayer-video-wrap')) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        post('landscape-toggle');
+    }, true);
+    window.addEventListener('keydown', event => {
+        if (!isWatchRoute() || event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+        const target = event.target;
+        if (target?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target?.tagName)) return;
+        if (event.code === 'KeyF' || (!event.code && event.key?.toLowerCase() === 'f')) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            post('landscape-toggle');
+        } else if (landscapeLocked && event.key === 'Escape') {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            post('landscape-exit');
+        }
+    }, true);
     // 既存の通信から録画 session_id だけを観測する。トークン・Cookie・レスポンスは渡さない。
     const observeStreamRequest = rawURL => {
         synchronizeRoute();
@@ -370,25 +364,18 @@
         };
     }
     const refresh = () => { scan(); if (pipVideo) publishPiP(pipVideo); };
-    const didBecomeActive = () => {
-        backgroundPhase = 'active';
-        backgroundPrepared = false;
-        backgroundCandidate = null;
-        backgroundAttempted = false;
-        refresh();
+    const reportLayout = () => {
+        const watch = document.querySelector('.watch-container')?.getBoundingClientRect?.();
+        post('layout-diagnostic', { width: window.innerWidth, height: window.innerHeight,
+            fullscreen: !!(document.fullscreenElement || document.webkitFullscreenElement),
+            landscapeLocked,
+            watchWidth: watch?.width || 0, watchHeight: watch?.height || 0 });
     };
     Object.defineProperty(window, 'KonomiTVNative', {
-        value: Object.freeze({ version: '0.2.0', refresh, prepareForBackground,
-            enterPictureInPictureForBackground, didBecomeActive }), configurable: false, writable: false
+        value: Object.freeze({ version: '0.2.0', refresh, setLandscapeLocked }), configurable: false, writable: false
     });
-    document.addEventListener('visibilitychange', () => {
-        // OS の pause 後に scan しても、willResignActive で記録した動画を先に使用する。
-        if (document.hidden) {
-            enterPictureInPictureForBackground();
-            refresh();
-        } else didBecomeActive();
-    });
-    window.addEventListener('resize', scheduleScan);
+    document.addEventListener('visibilitychange', refresh);
+    window.addEventListener('resize', () => { scheduleScan(); reportLayout(); });
     document.addEventListener('DOMContentLoaded', () => {
         new MutationObserver(scheduleScan).observe(document.documentElement, {
             childList: true, subtree: true

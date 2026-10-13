@@ -9,6 +9,8 @@ protocol WebBridgeDelegate: AnyObject {
     func bridgeReportedError(_ message: String)
     func bridgeRequestedSettings()
     func bridgeRequestedReload()
+    func bridgeRequestedLandscapeToggle()
+    func bridgeRequestedLandscapeExit()
 }
 
 /// 登録先の Web UI・PiP・録画セッションを連携する。受け付ける操作は固定する。
@@ -52,6 +54,10 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
             delegate?.bridgeRequestedSettings()
         case "reload":
             delegate?.bridgeRequestedReload()
+        case "landscape-toggle":
+            delegate?.bridgeRequestedLandscapeToggle()
+        case "landscape-exit":
+            delegate?.bridgeRequestedLandscapeExit()
         case "pip":
             if let active = payload["active"] as? Bool {
                 delegate?.bridgePictureInPictureChanged(isActive: active)
@@ -72,6 +78,24 @@ final class WebBridge: NSObject, WKScriptMessageHandler {
             if let text = payload["message"] as? String {
                 delegate?.bridgeReportedError(String(text.prefix(240)))
             }
+        case "media-diagnostic":
+            #if DEBUG
+            let keys = ["kind", "paused", "ended", "readyState", "time", "hidden", "mode", "bufferedEnd", "errorCode"]
+            let state = payload.filter { keys.contains($0.key) }
+            if let data = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]),
+               let text = String(data: data, encoding: .utf8) {
+                print("[Konomios media] \(text)")
+            }
+            #endif
+        case "layout-diagnostic":
+            #if DEBUG
+            let keys = ["width", "height", "fullscreen", "landscapeLocked", "watchWidth", "watchHeight"]
+            let state = payload.filter { keys.contains($0.key) }
+            if let data = try? JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]),
+               let text = String(data: data, encoding: .utf8) {
+                print("[Konomios layout] \(text)")
+            }
+            #endif
         default:
             break
         }
